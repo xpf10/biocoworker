@@ -267,24 +267,62 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
         raise RuntimeError("clusterProfiler returned no data or R execution failed.")
         
     except Exception as e:
-        print(f"WARNING: clusterProfiler run failed: {str(e)}. Falling back to Python hypergeometric GSEA.")
+        print(f"WARNING: clusterProfiler run failed: {str(e)}. Falling back to GSEApy ORA / Python hypergeometric GSEA.")
         
-        # Hypergeometric fallback (equivalent ORA)
         sig_de = de_results[(de_results['PAdj'] <= p_adj_cutoff) & (de_results['Log2FC'].abs() >= log2fc_cutoff)]
-        sig_genes = set(sig_de.index.tolist())
-        all_genes_count = len(de_results)
-        sig_count = len(sig_genes)
+        sig_genes = sig_de.index.tolist()
+        all_genes = de_results.index.tolist()
         
-        enrichment_results = []
-        if sig_count == 0:
+        if not sig_genes:
             return []
             
+        # Try using GSEApy ORA first
+        try:
+            import gseapy as gp
+            enr = gp.ora(
+                data=sig_genes,
+                gene_sets=pathways,
+                background=all_genes,
+                outdir=None,
+                verbose=False
+            )
+            
+            enrichment_results = []
+            if not enr.results.empty:
+                res_df = enr.results
+                for _, row in res_df.iterrows():
+                    p_val = float(row.get('P-value', 1.0))
+                    genes_str = row.get('Genes', '')
+                    genes_list = genes_str.split(';') if isinstance(genes_str, str) else []
+                    overlap = int(row.get('Hits', len(genes_list)))
+                    
+                    if overlap > 0:
+                        enrichment_results.append({
+                            "Pathway": row['Term'],
+                            "Overlap": overlap,
+                            "Pathway_Size": len(pathways.get(row['Term'], [])),
+                            "Genes": genes_list,
+                            "PValue": p_val,
+                            "Log10PValue": -np.log10(p_val + 1e-30)
+                        })
+                enrichment_results.sort(key=lambda x: x["PValue"])
+                print("INFO: Successfully ran enrichment analysis using GSEApy ORA.")
+                return enrichment_results
+        except Exception as gse_err:
+            print(f"WARNING: GSEApy ORA failed: {str(gse_err)}. Falling back to scipy hypergeometric calculation.")
+            
+        # Custom Scipy Hypergeometric fallback
+        sig_genes_set = set(sig_genes)
+        all_genes_count = len(all_genes)
+        sig_count = len(sig_genes_set)
+        
+        enrichment_results = []
         for pathway_name, path_genes in pathways.items():
             path_genes_in_data = [g for g in path_genes if g in de_results.index]
             M = all_genes_count
             n = sig_count
             N = len(path_genes_in_data)
-            overlap_genes = sig_genes.intersection(path_genes_in_data)
+            overlap_genes = sig_genes_set.intersection(path_genes_in_data)
             k = len(overlap_genes)
             
             if k > 0:
