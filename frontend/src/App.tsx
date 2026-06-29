@@ -16,7 +16,8 @@ import {
   Spin, 
   Alert, 
   Space, 
-  theme as antdTheme
+  theme as antdTheme,
+  message
 } from 'antd';
 import { 
   MessageSquare, 
@@ -153,6 +154,10 @@ export default function App() {
   const [isDeTable, setIsDeTable] = useState<boolean>(false);
   const [organism, setOrganism] = useState<string>('human');
   const [database, setDatabase] = useState<string>('KEGG');
+  const [workingDirPath, setWorkingDirPath] = useState<string>('');
+  const [currentWorkingDir, setCurrentWorkingDir] = useState<string>('');
+  const [dirFiles, setDirFiles] = useState<string[]>([]);
+  const [isDirLoading, setIsDirLoading] = useState<boolean>(false);
   
   // Multiple Models Management State
   const [modelsList, setModelsList] = useState<ModelConfig[]>([]);
@@ -284,8 +289,89 @@ export default function App() {
         setIsBackendHealthy(false);
       }
       fetchModelsList();
+      fetchWorkingDir();
     } catch (e) {
       setIsBackendHealthy(false);
+    }
+  };
+
+  const fetchWorkingDir = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/get_working_dir`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.working_dir) {
+          setCurrentWorkingDir(data.working_dir);
+          setWorkingDirPath(data.working_dir);
+          setDirFiles(data.files || []);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch working directory:', e);
+    }
+  };
+
+  const handleSetWorkingDir = async () => {
+    if (!workingDirPath.trim()) {
+      message.warning('请输入工作目录路径');
+      return;
+    }
+    setIsDirLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/set_working_dir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: workingDirPath })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentWorkingDir(data.working_dir);
+        setDirFiles(data.files || []);
+        message.success('工作目录设置成功');
+      } else {
+        const err = await res.json();
+        message.error(`设置失败: ${err.detail || '未知错误'}`);
+      }
+    } catch (e) {
+      message.error('请求失败，请检查网络或路径是否合法');
+    } finally {
+      setIsDirLoading(false);
+    }
+  };
+
+  const handleLoadFileFromDir = async (filename: string) => {
+    if (!isDeTable) {
+      message.info({
+        content: '请勾选下面的“直接导入已分析的差异表达表”以一键载入该文件；如果是counts矩阵，请在Importer手动组合或对 deepagent 发送指令“帮我载入counts矩阵 [文件名]”',
+        duration: 8
+      });
+      return;
+    }
+    
+    setIsDataLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/load_file_from_working_dir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename,
+          file_type: 'de_table',
+          is_mouse: organism === 'mouse',
+          database: database
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        message.success(`成功载入差异表达表 ${filename}，共 ${data.total_genes} 个基因`);
+        triggerAnalysis(data.total_genes, true);
+      } else {
+        const err = await res.json();
+        message.error(`导入失败: ${err.detail || '未知错误'}`);
+        setIsDataLoading(false);
+      }
+    } catch (e) {
+      message.error('导入请求失败');
+      setIsDataLoading(false);
     }
   };
 
@@ -1256,6 +1342,59 @@ export default function App() {
                         暂无活动文件，请载入数据。
                       </div>
                     )}
+                  </div>
+
+                  {/* Working Directory Area */}
+                  <div className="sidebar-section">
+                    <h4>工作目录管理 (Working Directory)</h4>
+                    <div className="flex flex-col gap-2 p-3 bg-tertiary border border-color rounded text-[11px]">
+                      <div className="flex gap-1.5 items-center">
+                        <Input
+                          placeholder="工作目录路径 (例如 D:\data)"
+                          value={workingDirPath}
+                          onChange={(e) => setWorkingDirPath(e.target.value)}
+                          style={{ flex: 1, fontSize: '10px' }}
+                          size="small"
+                        />
+                        <Button
+                          type="primary"
+                          size="small"
+                          onClick={handleSetWorkingDir}
+                          loading={isDirLoading}
+                        >
+                          设置
+                        </Button>
+                      </div>
+                      
+                      {currentWorkingDir && (
+                        <div className="mt-1">
+                          <div className="text-[10px] text-tertiary mb-1 truncate" title={currentWorkingDir}>
+                            当前路径: <span className="text-secondary font-mono">{currentWorkingDir}</span>
+                          </div>
+                          
+                          <div className="text-secondary font-bold mb-1">目录内文件 ({dirFiles.length}):</div>
+                          <div className="max-h-[120px] overflow-y-auto border border-color rounded bg-secondary p-1">
+                            {dirFiles.length === 0 ? (
+                              <div className="text-tertiary text-[10px] text-center py-2">无 CSV/TSV/TXT 文件</div>
+                            ) : (
+                              dirFiles.map((file) => (
+                                <div key={file} className="flex justify-between items-center text-[10px] py-0.5 border-b border-color last:border-0 hover:bg-tertiary px-1 rounded">
+                                  <span className="truncate text-secondary font-mono mr-1" title={file}>{file}</span>
+                                  <Button
+                                    type="link"
+                                    size="small"
+                                    className="p-0 text-[10px] h-auto font-semibold"
+                                    onClick={() => handleLoadFileFromDir(file)}
+                                  >
+                                    导入
+                                  </Button>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* Import Area */}

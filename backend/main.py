@@ -633,3 +633,148 @@ def chat_with_agent(chat_input: ChatMessage):
             f"*(Note: You can still run calculations and view plots locally without LLM features!)*"
         )
         return {"status": "error", "reply": fallback_reply}
+
+# Add working directory endpoints
+working_dir = None
+
+class WorkingDirRequest(BaseModel):
+    path: str
+
+class LoadFileRequest(BaseModel):
+    filename: str
+    file_type: str  # 'de_table', 'counts', 'design'
+    is_mouse: bool = False
+    database: str = "KEGG"
+
+@app.post("/api/set_working_dir")
+def set_working_dir(req: WorkingDirRequest):
+    global working_dir
+    path = req.path.strip()
+    if not os.path.exists(path):
+        raise HTTPException(status_code=400, detail="Path does not exist.")
+    if not os.path.isdir(path):
+        raise HTTPException(status_code=400, detail="Path is not a directory.")
+    working_dir = os.path.abspath(path)
+    
+    # Sync with agent
+    import backend.agent as agent_module
+    agent_module._working_dir = working_dir
+    
+    try:
+        files = os.listdir(working_dir)
+        csv_tsv_files = [f for f in files if f.endswith(('.csv', '.tsv', '.txt'))]
+        return {"status": "success", "working_dir": working_dir, "files": csv_tsv_files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/get_working_dir")
+def get_working_dir_api():
+    global working_dir
+    if not working_dir:
+        return {"status": "success", "working_dir": None, "files": []}
+    try:
+        files = os.listdir(working_dir)
+        csv_tsv_files = [f for f in files if f.endswith(('.csv', '.tsv', '.txt'))]
+        return {"status": "success", "working_dir": working_dir, "files": csv_tsv_files}
+    except Exception as e:
+        return {"status": "success", "working_dir": working_dir, "files": [], "error": str(e)}
+
+@app.post("/api/load_file_from_working_dir")
+def load_file_from_working_dir(req: LoadFileRequest):
+    global working_dir, counts_df, design_df, de_results_df, current_organism, current_database
+    if not working_dir:
+        raise HTTPException(status_code=400, detail="Working directory is not set.")
+    file_path = os.path.join(working_dir, req.filename)
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=400, detail="File does not exist.")
+        
+    try:
+        sep = '\t' if req.filename.endswith(('.tsv', '.txt')) else ','
+        try:
+            uploaded_df = pd.read_csv(file_path, sep=sep)
+        except UnicodeDecodeError:
+            uploaded_df = pd.read_csv(file_path, sep=sep, encoding='gbk')
+            
+        if req.file_type == 'de_table':
+            # Map gene column
+            gene_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['gene', 'gene_id', 'gene_name', 'symbol', 'id', 'name']:
+                    gene_col = col
+                    break
+            if gene_col:
+                uploaded_df = uploaded_df.rename(columns={gene_col: 'Gene'})
+            else:
+                first_col = uploaded_df.columns[0]
+                uploaded_df = uploaded_df.rename(columns={first_col: 'Gene'})
+            uploaded_df = uploaded_df.set_index('Gene')
+            
+            # Map fold change
+            fc_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['log2foldchange', 'log2fc', 'logfc', 'log2_fold_change', 'log2_fc', 'log_fc']:
+                    fc_col = col
+                    break
+                    
+            # Map PValue
+            p_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['pvalue', 'p.value', 'p_value', 'pval', 'p']:
+                    p_col = col
+                    break
+                    
+            # Map PAdj / FDR
+            padj_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['padj', 'p.adjust', 'p_adj', 'fdr', 'qvalue', 'q-value', 'adj_p']:
+                    padj_col = col
+                    break
+                    
+            if not fc_col or not p_col:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Could not identify differential expression columns. Needed 'log2FoldChange' / 'logFC' and 'pvalue' / 'PValue'."
+                )
+                
+            mapped_df = pd.DataFrame(index=uploaded_df.index)
+            mapped_df['Log2FC'] = uploaded_df[fc_col].astype(float)
+            mapped_df['PValue'] = uploaded_df[p_col].astype(float)
+            
+            if padj_col:
+                mapped_df['PAdj'] = uploaded_df[padj_col].astype(float)
+            else:
+                from statsmodels.stats import multitest
+                pvals = mapped_df['PValue'].fillna(1.0).values
+                _, padj, _, _ = multitest.multipletests(pvals, alpha=0.05, method='fdr_bh')
+                mapped_df['PAdj'] = padj
+                
+            mapped_df['Mean_Control'] = 10.0
+            mapped_df['Mean_Treat'] = 10.0 + mapped_df['Log2FC']
+            
+            # Store in globals
+            de_results_df = mapped_df
+            current_organism = "mouse" if req.is_mouse else "human"
+            current_database = req.database
+            
+            # Set dummy counts and design for compatibility
+            counts_df = pd.DataFrame(index=mapped_df.index)
+            counts_df['Control_1'] = 100
+            counts_df['Treat_1'] = 100
+            design_df = pd.DataFrame({'Group': ['Control', 'Treat']}, index=['Control_1', 'Treat_1'])
+            
+            # Sync with agent cache
+            import backend.agent as agent_module
+            agent_module._data_cache["de_results"] = de_results_df
+            agent_module._data_cache["counts"] = counts_df
+            agent_module._data_cache["design"] = design_df
+            
+            return {
+                "status": "success",
+                "message": f"Successfully loaded DE table '{req.filename}' from working directory.",
+                "total_genes": len(mapped_df)
+            }
+        else:
+            raise HTTPException(status_code=400, detail="Only 'de_table' loading is supported via direct click. For expression counts matrices, please use the Importer form or ask the deepagent assistant.")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
