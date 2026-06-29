@@ -82,7 +82,7 @@ def run_differential_expression(counts_df: pd.DataFrame, design_df: pd.DataFrame
         
         dds = DeseqDataSet(
             counts=counts_int.T,
-            clinical=design_df,
+            metadata=design_df,
             design_factors="Group",
             quiet=True
         )
