@@ -151,6 +151,7 @@ export default function App() {
   const [rightTab, setRightTab] = useState<string>('volcano');
   const [wideMode, setWideMode] = useState<boolean>(false);
   const [isDeTable, setIsDeTable] = useState<boolean>(false);
+  const [organism, setOrganism] = useState<string>('human');
   
   // Multiple Models Management State
   const [modelsList, setModelsList] = useState<ModelConfig[]>([]);
@@ -588,6 +589,7 @@ export default function App() {
       }
       formData.append('omics', activeOmics);
       formData.append('is_de_table', String(isDeTable));
+      formData.append('organism', organism);
 
       const res = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
@@ -1285,6 +1287,20 @@ export default function App() {
                             </label>
                           </div>
                         )}
+
+                        <div className="mb-1">
+                          <label className="block text-[10px] text-tertiary mb-0.5">选择分析物种 (Species):</label>
+                          <Select
+                            value={organism}
+                            onChange={(val) => setOrganism(val)}
+                            style={{ width: '100%', fontSize: '10px' }}
+                            size="small"
+                            options={[
+                              { value: 'human', label: '人类 (Homo sapiens)' },
+                              { value: 'mouse', label: '小鼠 (Mus musculus)' }
+                            ]}
+                          />
+                        </div>
 
                         <div>
                           <label className="block text-[10px] text-tertiary mb-0.5">

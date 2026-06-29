@@ -116,6 +116,7 @@ model_config = load_models_config()
 
 # Local cached data variables
 current_omics = "transcriptomics"
+current_organism = "human"
 counts_df: Optional[pd.DataFrame] = None
 design_df: Optional[pd.DataFrame] = None
 de_results_df: Optional[pd.DataFrame] = None
@@ -341,10 +342,12 @@ def upload_files(
     counts_file: UploadFile = File(...),
     design_file: Optional[UploadFile] = File(None),
     omics: str = Form("transcriptomics"),
-    is_de_table: bool = Form(False)
+    is_de_table: bool = Form(False),
+    organism: str = Form("human")
 ):
-    global counts_df, design_df, de_results_df, current_omics, gwas_variants
+    global counts_df, design_df, de_results_df, current_omics, gwas_variants, current_organism
     current_omics = omics
+    current_organism = organism
     try:
         counts_bytes = counts_file.file.read()
         try:
@@ -503,7 +506,7 @@ def run_analysis(
     p_adj_cutoff: float = Form(0.05),
     log2fc_cutoff: float = Form(1.0)
 ):
-    global counts_df, design_df, de_results_df, current_omics, gwas_variants
+    global counts_df, design_df, de_results_df, current_omics, gwas_variants, current_organism
     
     if current_omics == "genomics":
         if gwas_variants is None:
@@ -549,7 +552,7 @@ def run_analysis(
         if current_omics == "proteomics":
             ppi_network = get_ppi_network(de_results_df, p_adj_cutoff)
         elif current_omics in ["transcriptomics", "metabolomics"]:
-            enrichment = run_pathway_enrichment(de_results_df, p_adj_cutoff, log2fc_cutoff)
+            enrichment = run_pathway_enrichment(de_results_df, p_adj_cutoff, log2fc_cutoff, current_organism)
             
         de_results_list = de_results_df.reset_index().rename(columns={"Gene": "Gene"}).to_dict(orient="records")
         pca_list = pca_df.reset_index().to_dict(orient="records")

@@ -175,7 +175,7 @@ def run_pca_analysis(counts_df: pd.DataFrame, design_df: pd.DataFrame) -> typing
     explained_variance = (pca.explained_variance_ratio_ * 100).tolist()
     return pca_df, explained_variance
 
-def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05, log2fc_cutoff: float = 1.0) -> list:
+def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05, log2fc_cutoff: float = 1.0, organism: str = "human") -> list:
     pathways = {
         "Cell Cycle": ["Gene_0001", "Gene_0002", "GAPDH", "Gene_0012", "Gene_0015", "Gene_0025", "TP53", "MYC", "Gene_0120", "Gene_0140", "Gene_0200", "Gene_0300"],
         "MAPK Signaling Pathway": ["EGFR", "TNF", "IL6", "JUN", "FOS", "Gene_0077", "Gene_0088", "Gene_0099", "Gene_0110", "Gene_0155", "Gene_0210", "Gene_0310", "Gene_0410"],
@@ -186,6 +186,18 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
         "Glycolysis / Gluconeogenesis": ["GAPDH", "ACTB", "Gene_0011", "Gene_0013", "Gene_0014", "Gene_0016", "Gene_0101", "Gene_0102", "Gene_0103", "Gene_0201"],
         "Ribosome": [f"Gene_{i:04d}" for i in range(200, 240)]
     }
+    
+    if organism.lower() == "mouse":
+        mapped_pathways = {}
+        for name, genes in pathways.items():
+            mapped_genes = []
+            for g in genes:
+                if g.startswith("Gene_"):
+                    mapped_genes.append(g)
+                else:
+                    mapped_genes.append(g[0].upper() + g[1:].lower())
+            mapped_pathways[name] = mapped_genes
+        pathways = mapped_pathways
     
     # Try running clusterProfiler via Rscript
     try:
