@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import os
 import shutil
+import json
 
 # =====================================================================
 # 1. TRANSCRIPTOMICS (RNA-seq) MODULE
@@ -175,8 +176,42 @@ def run_pca_analysis(counts_df: pd.DataFrame, design_df: pd.DataFrame) -> typing
     explained_variance = (pca.explained_variance_ratio_ * 100).tolist()
     return pca_df, explained_variance
 
-def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05, log2fc_cutoff: float = 1.0, organism: str = "human") -> list:
-    pathways = {
+def get_cached_enrichr_library(library_name: str, organism: str = "human") -> dict:
+    """
+    Downloads and caches Enrichr libraries locally as JSON files.
+    """
+    cache_dir = os.path.join(os.path.dirname(__file__), "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    
+    cache_file = os.path.join(cache_dir, f"{library_name}.json")
+    
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                lib_dict = json.load(f)
+                print(f"INFO: Loaded cached Enrichr library '{library_name}' from disk.")
+                return lib_dict
+        except Exception as e:
+            print(f"WARNING: Failed to read cached library: {e}. Re-downloading...")
+            
+    # Download online
+    print(f"INFO: Downloading Enrichr library '{library_name}' online...")
+    try:
+        import gseapy as gp
+        # gp.get_library returns dict of {pathway: gene_list}
+        lib_dict = gp.get_library(library_name, organism=organism)
+        
+        # Save to cache
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(lib_dict, f, indent=2, ensure_ascii=False)
+        print(f"INFO: Successfully cached library '{library_name}' to disk.")
+        return lib_dict
+    except Exception as e:
+        print(f"ERROR: Failed to download library '{library_name}' from Enrichr: {e}")
+        return None
+
+def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05, log2fc_cutoff: float = 1.0, organism: str = "human", database: str = "KEGG") -> list:
+    mock_pathways = {
         "Cell Cycle": ["Gene_0001", "Gene_0002", "GAPDH", "Gene_0012", "Gene_0015", "Gene_0025", "TP53", "MYC", "Gene_0120", "Gene_0140", "Gene_0200", "Gene_0300"],
         "MAPK Signaling Pathway": ["EGFR", "TNF", "IL6", "JUN", "FOS", "Gene_0077", "Gene_0088", "Gene_0099", "Gene_0110", "Gene_0155", "Gene_0210", "Gene_0310", "Gene_0410"],
         "p53 Signaling Pathway": ["TP53", "BRCA1", "Gene_0032", "Gene_0033", "Gene_0034", "Gene_0035", "Gene_0122", "Gene_0180", "Gene_0250", "Gene_0350"],
@@ -186,7 +221,28 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
         "Glycolysis / Gluconeogenesis": ["GAPDH", "ACTB", "Gene_0011", "Gene_0013", "Gene_0014", "Gene_0016", "Gene_0101", "Gene_0102", "Gene_0103", "Gene_0201"],
         "Ribosome": [f"Gene_{i:04d}" for i in range(200, 240)]
     }
-    
+
+    # Resolve Enrichr library name
+    lib_name = "KEGG_2021_Human"
+    db_upper = database.upper()
+    if db_upper == "KEGG":
+        lib_name = "KEGG_2021_Human" if organism.lower() == "human" else "KEGG_2019_Mouse"
+    elif db_upper == "GO_BP":
+        lib_name = "GO_Biological_Process_2023"
+    elif db_upper == "GO_MF":
+        lib_name = "GO_Molecular_Function_2023"
+    elif db_upper == "GO_CC":
+        lib_name = "GO_Cellular_Component_2023"
+    else:
+        # User customized Enrichr library name
+        lib_name = database
+
+    # Fetch and cache
+    pathways = get_cached_enrichr_library(lib_name, organism)
+    if not pathways:
+        print(f"WARNING: Using local mock pathways database as fallback for '{database}'.")
+        pathways = mock_pathways
+
     if organism.lower() == "mouse":
         mapped_pathways = {}
         for name, genes in pathways.items():
@@ -194,7 +250,7 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
             for g in genes:
                 if g.startswith("Gene_"):
                     mapped_genes.append(g)
-                else:
+                elif isinstance(g, str) and len(g) > 0:
                     mapped_genes.append(g[0].upper() + g[1:].lower())
             mapped_pathways[name] = mapped_genes
         pathways = mapped_pathways

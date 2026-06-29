@@ -152,6 +152,7 @@ export default function App() {
   const [wideMode, setWideMode] = useState<boolean>(false);
   const [isDeTable, setIsDeTable] = useState<boolean>(false);
   const [organism, setOrganism] = useState<string>('human');
+  const [database, setDatabase] = useState<string>('KEGG');
   
   // Multiple Models Management State
   const [modelsList, setModelsList] = useState<ModelConfig[]>([]);
@@ -590,6 +591,7 @@ export default function App() {
       formData.append('omics', activeOmics);
       formData.append('is_de_table', String(isDeTable));
       formData.append('organism', organism);
+      formData.append('database', database);
 
       const res = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
@@ -1301,6 +1303,24 @@ export default function App() {
                             ]}
                           />
                         </div>
+
+                        {activeOmics !== 'genomics' && (
+                          <div className="mb-1">
+                            <label className="block text-[10px] text-tertiary mb-0.5">选择富集数据库 (Database):</label>
+                            <Select
+                              value={database}
+                              onChange={(val) => setDatabase(val)}
+                              style={{ width: '100%', fontSize: '10px' }}
+                              size="small"
+                              options={[
+                                { value: 'KEGG', label: 'KEGG Pathway (通路)' },
+                                { value: 'GO_BP', label: 'GO Biological Process (生物过程)' },
+                                { value: 'GO_MF', label: 'GO Molecular Function (分子功能)' },
+                                { value: 'GO_CC', label: 'GO Cellular Component (细胞组分)' }
+                              ]}
+                            />
+                          </div>
+                        )}
 
                         <div>
                           <label className="block text-[10px] text-tertiary mb-0.5">
