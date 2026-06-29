@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Frontend node_modules & builds
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Credentials and configurations (contains API keys)
+models_config.json
+backend/models_config.json
+.env
