@@ -785,6 +785,16 @@ export default function App() {
     const height = 400;
     const padding = 60;
 
+    if (isDeTable) {
+      return (
+        <div style={{ height: height, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)' }}>
+          <Compass className="w-12 h-12 mb-3 text-secondary opacity-40 animate-pulse" />
+          <div className="font-bold">无需绘制降维得分图</div>
+          <div className="text-[11px] mt-1 opacity-70">由于您直接导入了已分析好的差异表达表而非原始 Counts 矩阵，无法进行降维计算。</div>
+        </div>
+      );
+    }
+
     const { coordinates, explained_variance } = analysisResults.pca;
 
     const xVals = coordinates.map(c => c.PC1);
@@ -1759,44 +1769,52 @@ export default function App() {
             {/* 2. Heatmap view */}
             {rightTab === 'heatmap' && analysisResults && (
               <Card className="visual-desk-card max-w-3xl mx-auto">
-                <div className="flex flex-col gap-2 overflow-x-auto">
-                  <div className="flex text-[10px] text-secondary font-bold border-b border-color pb-2 mb-2">
-                    <span className="w-24 flex-shrink-0">ID (特异性分子)</span>
-                    <div className="flex justify-between flex-grow">
-                      {analysisResults.heatmap.samples.map(s => (
-                        <span key={s} className="w-14 text-center overflow-hidden text-ellipsis whitespace-nowrap">
-                          {s.split('_')[0] === 'Control' ? 'Ctrl' : 'Treat'}<br />{s.split('_')[1]}
-                        </span>
+                {isDeTable ? (
+                  <div className="h-[300px] flex flex-col items-center justify-center text-secondary">
+                    <Table className="w-12 h-12 mb-3 text-secondary opacity-40 animate-pulse" />
+                    <div className="font-bold">无需绘制丰度热图</div>
+                    <div className="text-[11px] mt-1 opacity-70">由于您导入的是已分析好的差异表达表而非原始 Counts 矩阵，无法进行样本丰度归一化。</div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2 overflow-x-auto">
+                    <div className="flex text-[10px] text-secondary font-bold border-b border-color pb-2 mb-2">
+                      <span className="w-24 flex-shrink-0">ID (特异性分子)</span>
+                      <div className="flex justify-between flex-grow">
+                        {analysisResults.heatmap.samples.map(s => (
+                          <span key={s} className="w-14 text-center overflow-hidden text-ellipsis whitespace-nowrap">
+                            {s.split('_')[0] === 'Control' ? 'Ctrl' : 'Treat'}<br />{s.split('_')[1]}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 max-h-[450px] overflow-y-auto pr-1">
+                      {analysisResults.heatmap.matrix.slice(0, topHeatmapGenes).map((row, idx) => (
+                        <div key={idx} className="flex items-center text-xs hover:bg-tertiary/40 py-0.5 rounded">
+                          <span className="w-24 flex-shrink-0 font-bold text-primary font-mono">{row.Gene}</span>
+                          <div className="flex justify-between flex-grow">
+                            {analysisResults.heatmap.samples.map(s => {
+                              const val = row.values[s];
+                              return (
+                                <div 
+                                  key={s} 
+                                  className="w-14 h-6.5 rounded flex items-center justify-center text-[10px] text-white font-mono font-bold"
+                                  style={{ 
+                                    backgroundColor: getHeatmapColor(val),
+                                    color: Math.abs(val) > 1.2 ? '#fff' : 'var(--text-primary)'
+                                  }}
+                                  title={`特征 ID: ${row.Gene}\n样本 ID: ${s}\nZ-Score: ${val.toFixed(3)}`}
+                                >
+                                  {val.toFixed(2)}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
-
-                  <div className="flex flex-col gap-1.5 max-h-[450px] overflow-y-auto pr-1">
-                    {analysisResults.heatmap.matrix.slice(0, topHeatmapGenes).map((row, idx) => (
-                      <div key={idx} className="flex items-center text-xs hover:bg-tertiary/40 py-0.5 rounded">
-                        <span className="w-24 flex-shrink-0 font-bold text-primary font-mono">{row.Gene}</span>
-                        <div className="flex justify-between flex-grow">
-                          {analysisResults.heatmap.samples.map(s => {
-                            const val = row.values[s];
-                            return (
-                              <div 
-                                key={s} 
-                                className="w-14 h-6.5 rounded flex items-center justify-center text-[10px] text-white font-mono font-bold"
-                                style={{ 
-                                  backgroundColor: getHeatmapColor(val),
-                                  color: Math.abs(val) > 1.2 ? '#fff' : 'var(--text-primary)'
-                                }}
-                                title={`特征 ID: ${row.Gene}\n样本 ID: ${s}\nZ-Score: ${val.toFixed(3)}`}
-                              >
-                                {val.toFixed(2)}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                )}
               </Card>
             )}
 
