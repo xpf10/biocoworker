@@ -347,7 +347,10 @@ def upload_files(
     current_omics = omics
     try:
         counts_bytes = counts_file.file.read()
-        counts_str = counts_bytes.decode('utf-8')
+        try:
+            counts_str = counts_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            counts_str = counts_bytes.decode('gbk', errors='ignore')
         sep = '\t' if counts_file.filename.endswith(('.tsv', '.txt')) else ','
         
         if omics == "genomics":
@@ -456,7 +459,10 @@ def upload_files(
         uploaded_counts = uploaded_counts.set_index(first_col)
         
         design_bytes = design_file.file.read()
-        design_str = design_bytes.decode('utf-8')
+        try:
+            design_str = design_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            design_str = design_bytes.decode('gbk', errors='ignore')
         sep_d = '\t' if design_file.filename.endswith(('.tsv', '.txt')) else ','
         uploaded_design = pd.read_csv(io.StringIO(design_str), sep=sep_d)
         sample_col = uploaded_design.columns[0]
@@ -526,12 +532,17 @@ def run_analysis(
             import backend.agent as agent_module
             agent_module._data_cache["de_results"] = de_results_df
         
-        if current_omics == "metabolomics":
-            pca_df, explained_var = run_plsda_analysis(counts_df, design_df)
+        if is_imported_de:
+            pca_df = pd.DataFrame(columns=['PC1', 'PC2', 'Group', 'Sample'])
+            explained_var = [0.0, 0.0]
+            heatmap = {"genes": [], "samples": [], "matrix": []}
         else:
-            pca_df, explained_var = run_pca_analysis(counts_df, design_df)
-            
-        heatmap = get_heatmap_data(counts_df, de_results_df, top_n=50)
+            if current_omics == "metabolomics":
+                pca_df, explained_var = run_plsda_analysis(counts_df, design_df)
+            else:
+                pca_df, explained_var = run_pca_analysis(counts_df, design_df)
+                
+            heatmap = get_heatmap_data(counts_df, de_results_df, top_n=50)
         
         enrichment = []
         ppi_network = {}
