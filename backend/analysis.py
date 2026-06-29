@@ -279,11 +279,12 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
         # Try using GSEApy ORA first
         try:
             import gseapy as gp
-            enr = gp.ora(
-                data=sig_genes,
+            enr = gp.enrich(
+                gene_list=sig_genes,
                 gene_sets=pathways,
                 background=all_genes,
                 outdir=None,
+                no_plot=True,
                 verbose=False
             )
             
@@ -294,7 +295,12 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
                     p_val = float(row.get('P-value', 1.0))
                     genes_str = row.get('Genes', '')
                     genes_list = genes_str.split(';') if isinstance(genes_str, str) else []
-                    overlap = int(row.get('Hits', len(genes_list)))
+                    
+                    overlap_str = row.get('Overlap', '')
+                    try:
+                        overlap = int(overlap_str.split('/')[0])
+                    except Exception:
+                        overlap = len(genes_list)
                     
                     if overlap > 0:
                         enrichment_results.append({
