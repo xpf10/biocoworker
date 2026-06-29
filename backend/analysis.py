@@ -208,7 +208,22 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
             
         rscript_path = shutil.which('Rscript')
         if not rscript_path:
-            raise FileNotFoundError("Rscript executable not found in system PATH.")
+            # Common paths on Windows, including the user's specific path
+            possible_paths = [
+                r"E:\Program Files\R\R-4.5.3\bin\x64\Rscript.exe",
+                r"C:\Program Files\R\R-4.5.3\bin\x64\Rscript.exe",
+                r"C:\Program Files\R\R-4.4.3\bin\x64\Rscript.exe",
+                r"C:\Program Files\R\R-4.4.2\bin\x64\Rscript.exe",
+                r"C:\Program Files\R\R-4.4.1\bin\x64\Rscript.exe",
+                r"C:\Program Files\R\R-4.4.0\bin\x64\Rscript.exe",
+            ]
+            for p in possible_paths:
+                if os.path.exists(p):
+                    rscript_path = p
+                    break
+                    
+        if not rscript_path:
+            raise FileNotFoundError("Rscript executable not found in system PATH or common installation directories.")
             
         with tempfile.TemporaryDirectory() as tmpdir:
             genes_file = os.path.join(tmpdir, "genes.csv")
@@ -297,6 +312,7 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
                 background=all_genes,
                 outdir=None,
                 no_plot=True,
+                cutoff=1.0,
                 verbose=False
             )
             
