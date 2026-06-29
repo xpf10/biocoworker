@@ -7,7 +7,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    title: "BioCoworker - Bioinformatics AI Assistant",
+    title: "BioCoworker - AI 多组学生信协同工作站",
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false, // Set to false to allow simple local dev scripts integration
