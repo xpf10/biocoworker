@@ -340,7 +340,8 @@ def load_mock_data(omics: str = "transcriptomics", num_genes: int = 1500):
 def upload_files(
     counts_file: UploadFile = File(...),
     design_file: Optional[UploadFile] = File(None),
-    omics: str = Form("transcriptomics")
+    omics: str = Form("transcriptomics"),
+    is_de_table: bool = Form(False)
 ):
     global counts_df, design_df, de_results_df, current_omics, gwas_variants
     current_omics = omics
@@ -361,6 +362,92 @@ def upload_files(
                 "design": []
             }
             
+        if is_de_table:
+            # Parse the pre-analyzed differential expression table (e.g. from DESeq2 or edgeR)
+            uploaded_df = pd.read_csv(io.StringIO(counts_str), sep=sep)
+            
+            # Map the gene names
+            gene_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['gene', 'gene_id', 'gene_name', 'symbol', 'id', 'name']:
+                    gene_col = col
+                    break
+            if gene_col:
+                uploaded_df = uploaded_df.rename(columns={gene_col: 'Gene'})
+            else:
+                first_col = uploaded_df.columns[0]
+                uploaded_df = uploaded_df.rename(columns={first_col: 'Gene'})
+                
+            uploaded_df = uploaded_df.set_index('Gene')
+            
+            # Map logFC
+            fc_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['log2foldchange', 'log2fc', 'logfc', 'log2_fold_change', 'log2_fc', 'log_fc']:
+                    fc_col = col
+                    break
+            
+            # Map PValue
+            p_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['pvalue', 'p.value', 'p_value', 'pval', 'p']:
+                    p_col = col
+                    break
+            
+            # Map PAdj / FDR
+            padj_col = None
+            for col in uploaded_df.columns:
+                if col.lower() in ['padj', 'p.adjust', 'p_adj', 'fdr', 'qvalue', 'q-value', 'adj_p']:
+                    padj_col = col
+                    break
+                    
+            if not fc_col or not p_col:
+                raise ValueError(
+                    f"无法自动识别差异表达表的关键字段。当前文件列名: {list(uploaded_df.columns)}。 "
+                    "需要包含类似 'log2FoldChange' / 'logFC' 以及 'pvalue' / 'PValue' 的列。"
+                )
+                
+            mapped_df = pd.DataFrame(index=uploaded_df.index)
+            mapped_df['Log2FC'] = uploaded_df[fc_col].astype(float)
+            mapped_df['PValue'] = uploaded_df[p_col].astype(float)
+            
+            if padj_col:
+                mapped_df['PAdj'] = uploaded_df[padj_col].astype(float)
+            else:
+                # Calculate FDR using Benjamini-Hochberg correction
+                from statsmodels.stats import multitest
+                pvals = mapped_df['PValue'].fillna(1.0).values
+                _, padj, _, _ = multitest.multipletests(pvals, alpha=0.05, method='fdr_bh')
+                mapped_df['PAdj'] = padj
+                
+            mapped_df['Mean_Control'] = 10.0
+            mapped_df['Mean_Treat'] = 10.0 + mapped_df['Log2FC']
+            
+            de_results_df = mapped_df
+            
+            # Setup dummy counts and design for visual structure compatibility
+            counts_df = pd.DataFrame(index=mapped_df.index)
+            counts_df['Control_1'] = 100
+            counts_df['Treat_1'] = 100
+            design_df = pd.DataFrame({'Group': ['Control', 'Treat']}, index=['Control_1', 'Treat_1'])
+            set_cached_data(counts_df, design_df)
+            
+            # Save to agent cache
+            import backend.agent as agent_module
+            agent_module._data_cache["de_results"] = de_results_df
+            
+            head_counts = mapped_df.head(20).reset_index().rename(columns={"Gene": "Gene"}).to_dict(orient="records")
+            
+            return {
+                "status": "success",
+                "omics": omics,
+                "total_genes": len(mapped_df),
+                "samples": list(counts_df.columns),
+                "counts": head_counts,
+                "design": design_df.reset_index().to_dict(orient="records"),
+                "imported_de": True
+            }
+
         if not design_file:
             raise HTTPException(status_code=400, detail="Sample design file is required for expression profiling omics.")
             
@@ -430,9 +517,14 @@ def run_analysis(
         raise HTTPException(status_code=400, detail="No dataset loaded. Please import data first.")
         
     try:
-        de_results_df = run_differential_expression(counts_df, design_df)
-        import backend.agent as agent_module
-        agent_module._data_cache["de_results"] = de_results_df
+        is_imported_de = False
+        if de_results_df is not None and list(counts_df.columns) == ['Control_1', 'Treat_1']:
+            is_imported_de = True
+            
+        if not is_imported_de:
+            de_results_df = run_differential_expression(counts_df, design_df)
+            import backend.agent as agent_module
+            agent_module._data_cache["de_results"] = de_results_df
         
         if current_omics == "metabolomics":
             pca_df, explained_var = run_plsda_analysis(counts_df, design_df)

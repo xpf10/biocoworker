@@ -147,6 +147,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [rightTab, setRightTab] = useState<string>('volcano');
   const [wideMode, setWideMode] = useState<boolean>(false);
+  const [isDeTable, setIsDeTable] = useState<boolean>(false);
   
   // Multiple Models Management State
   const [modelsList, setModelsList] = useState<ModelConfig[]>([]);
@@ -569,7 +570,7 @@ export default function App() {
     const countsFile = countsFileInputRef.current?.files?.[0];
     const designFile = designFileInputRef.current?.files?.[0];
 
-    if (!countsFile || (activeOmics !== 'genomics' && !designFile)) {
+    if (!countsFile || (activeOmics !== 'genomics' && !isDeTable && !designFile)) {
       setUploadError("请提供完整的数据文件！");
       return;
     }
@@ -579,10 +580,11 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append('counts_file', countsFile);
-      if (designFile) {
+      if (designFile && !isDeTable) {
         formData.append('design_file', designFile);
       }
       formData.append('omics', activeOmics);
+      formData.append('is_de_table', String(isDeTable));
 
       const res = await fetch(`${API_BASE}/api/upload`, {
         method: 'POST',
@@ -1206,18 +1208,40 @@ export default function App() {
 
                       <form onSubmit={handleCustomUpload} className="flex flex-col gap-2.5 p-3 bg-tertiary border border-color rounded text-[11px]">
                         <div className="font-bold text-secondary">导入自定义表格:</div>
+                        
+                        {activeOmics !== 'genomics' && (
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <input
+                              type="checkbox"
+                              id="isDeTableCheckbox"
+                              checked={isDeTable}
+                              onChange={(e) => setIsDeTable(e.target.checked)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                            <label htmlFor="isDeTableCheckbox" style={{ cursor: 'pointer', fontWeight: 600 }}>
+                              直接导入已分析的差异表达表 (DESeq2/edgeR)
+                            </label>
+                          </div>
+                        )}
+
                         <div>
                           <label className="block text-[10px] text-tertiary mb-0.5">
-                            {activeOmics === 'genomics' ? 'GWAS P值位置表 (CSV/TSV):' : '表达量矩阵 (CSV/TSV):'}
+                            {activeOmics === 'genomics'
+                              ? 'GWAS P值位置表 (CSV/TSV):'
+                              : isDeTable
+                              ? '已分析的差异表达结果表 (CSV/TSV):'
+                              : '表达量原始 Counts 矩阵 (CSV/TSV):'}
                           </label>
                           <input type="file" ref={countsFileInputRef} accept=".csv,.tsv,.txt" className="w-full text-[10px]" />
                         </div>
-                        {activeOmics !== 'genomics' && (
+
+                        {activeOmics !== 'genomics' && !isDeTable && (
                           <div>
                             <label className="block text-[10px] text-tertiary mb-0.5">样本分组设计表 (CSV/TSV):</label>
                             <input type="file" ref={designFileInputRef} accept=".csv,.tsv,.txt" className="w-full text-[10px]" />
                           </div>
                         )}
+
                         <Button
                           htmlType="submit"
                           type="dashed"
