@@ -12,6 +12,8 @@
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://127.0.0.1:5173 && electron . --dev\""
   },
   "dependencies": {
+    "ag-grid-community": "^36.0.0",
+    "ag-grid-react": "^36.0.0",
     "antd": "^6.5.0",
     "lucide-react": "^1.22.0",
     "react": "^19.2.7",

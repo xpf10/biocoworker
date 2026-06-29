@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { AgGridReact } from 'ag-grid-react';
+import 'ag-grid-community/styles/ag-grid.css';
+import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { 
   ConfigProvider, 
   Button, 
@@ -661,6 +664,55 @@ export default function App() {
       setSidebarOpen(true);
     }
   };
+
+  // AG Grid column definitions for expression profiling differential table
+  const deTableColumnDefs = React.useMemo<any[]>(() => [
+    { field: 'Gene', headerName: '特征 ID (Feature)', sortable: true, filter: true, flex: 1.2, minWidth: 140 },
+    { 
+      field: 'Log2FC', 
+      headerName: 'Log2FC', 
+      sortable: true, 
+      filter: 'agNumberColumnFilter',
+      valueFormatter: (params: any) => params.value !== undefined ? (params.value > 0 ? '+' : '') + params.value.toFixed(3) : '',
+      cellClassRules: {
+        'text-rose-500 font-bold': (params: any) => params.value > 0,
+        'text-blue-500 font-bold': (params: any) => params.value < 0,
+      },
+      width: 110
+    },
+    { 
+      field: 'Mean_Control', 
+      headerName: 'Mean Control', 
+      sortable: true, 
+      filter: 'agNumberColumnFilter',
+      valueFormatter: (params: any) => params.value !== undefined ? params.value.toFixed(3) : '',
+      width: 120 
+    },
+    { 
+      field: 'Mean_Treat', 
+      headerName: 'Mean Treat', 
+      sortable: true, 
+      filter: 'agNumberColumnFilter',
+      valueFormatter: (params: any) => params.value !== undefined ? params.value.toFixed(3) : '',
+      width: 120 
+    },
+    { 
+      field: 'PValue', 
+      headerName: 'P-Value', 
+      sortable: true, 
+      filter: 'agNumberColumnFilter',
+      valueFormatter: (params: any) => params.value !== undefined ? params.value.toExponential(3) : '',
+      width: 120 
+    },
+    { 
+      field: 'PAdj', 
+      headerName: 'FDR (PAdj)', 
+      sortable: true, 
+      filter: 'agNumberColumnFilter',
+      valueFormatter: (params: any) => params.value !== undefined ? params.value.toExponential(3) : '',
+      width: 120 
+    }
+  ], []);
 
   // Volcano SVG Plot drawing
   const renderVolcanoPlot = () => {
@@ -1952,35 +2004,17 @@ export default function App() {
                   )
                 ) : (
                   analysisResults?.de_results && (
-                    <div className="overflow-x-auto max-h-[460px] border border-color rounded-xl">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="bg-tertiary border-b border-color text-secondary">
-                            <th className="p-3 font-bold">特征 ID (Feature Name)</th>
-                            <th className="p-3 font-bold text-right">Log2FC</th>
-                            <th className="p-3 font-bold text-right">Mean Control</th>
-                            <th className="p-3 font-bold text-right">Mean Treat</th>
-                            <th className="p-3 font-bold text-right">P-Value</th>
-                            <th className="p-3 font-bold text-right">FDR (PAdj)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {analysisResults.de_results
-                            .filter(g => Math.abs(g.Log2FC) >= log2fcCutoff && g.PAdj <= pAdjCutoff)
-                            .map((row, idx) => (
-                              <tr key={idx} className="border-b border-color hover:bg-tertiary/40">
-                                <td className="p-3 font-bold text-primary font-mono">{row.Gene}</td>
-                                <td className={`p-3 text-right font-bold ${row.Log2FC > 0 ? "text-rose-500" : "text-blue-500"}`}>
-                                  {row.Log2FC > 0 ? '+' : ''}{row.Log2FC.toFixed(3)}
-                                </td>
-                                <td className="p-3 text-right text-secondary font-mono">{row.Mean_Control.toFixed(3)}</td>
-                                <td className="p-3 text-right text-secondary font-mono">{row.Mean_Treat.toFixed(3)}</td>
-                                <td className="p-3 text-right text-secondary font-mono">{row.PValue.toExponential(3)}</td>
-                                <td className="p-3 text-right text-secondary font-mono">{row.PAdj.toExponential(3)}</td>
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
+                    <div 
+                      className={isDark ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'} 
+                      style={{ height: 400, width: '100%', borderRadius: '8px', overflow: 'hidden' }}
+                    >
+                      <AgGridReact
+                        rowData={analysisResults.de_results.filter(g => Math.abs(g.Log2FC) >= log2fcCutoff && g.PAdj <= pAdjCutoff)}
+                        columnDefs={deTableColumnDefs}
+                        pagination={true}
+                        paginationPageSize={10}
+                        paginationPageSizeSelector={[10, 25, 50, 100]}
+                      />
                     </div>
                   )
                 )}
