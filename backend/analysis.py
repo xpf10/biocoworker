@@ -225,13 +225,17 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
         if not rscript_path:
             raise FileNotFoundError("Rscript executable not found in system PATH or common installation directories.")
             
+        all_genes = de_results.index.tolist()
+        
         with tempfile.TemporaryDirectory() as tmpdir:
             genes_file = os.path.join(tmpdir, "genes.csv")
+            universe_file = os.path.join(tmpdir, "universe.csv")
             term2gene_file = os.path.join(tmpdir, "term2gene.csv")
             output_file = os.path.join(tmpdir, "output.csv")
             
             # Write files
             pd.Series(sig_genes).to_csv(genes_file, index=False, header=False)
+            pd.Series(all_genes).to_csv(universe_file, index=False, header=False)
             t2g_list = []
             for term, g_list in pathways.items():
                 for g in g_list:
@@ -242,14 +246,17 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
             r_script_content = f"""
             suppressPackageStartupMessages(library(clusterProfiler))
             genes <- read.csv("{genes_file.replace('\\', '/')}", header=FALSE)[,1]
+            universe <- read.csv("{universe_file.replace('\\', '/')}", header=FALSE)[,1]
             term2gene <- read.csv("{term2gene_file.replace('\\', '/')}")
             
             res <- enricher(
                 gene = as.character(genes),
                 pvalueCutoff = 1.0,
+                qvalueCutoff = 1.0,
                 pAdjustMethod = "BH",
                 minGSSize = 1,
-                TERM2GENE = term2gene
+                TERM2GENE = term2gene,
+                universe = as.character(universe)
             )
             
             if (!is.null(res) && nrow(res@result) > 0) {{
