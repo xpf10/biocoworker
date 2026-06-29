@@ -149,21 +149,242 @@ def get_gene_details(gene_name: str) -> str:
     else:
         return f"Gene {gene_name} was not found in the currently analyzed RNA-seq dataset. Description: {info}"
 
+# Global state for working directory
+_working_dir = None
+
+@tool
+def set_working_directory(dir_path: str) -> str:
+    """
+    Sets the working directory where the user's data files (CSV/TSV) are stored.
+    Parameters:
+    - dir_path: absolute path to the directory (e.g. 'D:/data/project').
+    """
+    global _working_dir
+    if not os.path.exists(dir_path):
+        return f"Error: Directory path '{dir_path}' does not exist on the file system."
+    if not os.path.isdir(dir_path):
+        return f"Error: Path '{dir_path}' is a file, not a directory."
+    
+    _working_dir = os.path.abspath(dir_path)
+    try:
+        files = os.listdir(_working_dir)
+        csv_tsv_files = [f for f in files if f.endswith(('.csv', '.tsv', '.txt'))]
+        files_str = ", ".join(csv_tsv_files) if csv_tsv_files else "No CSV/TSV/TXT files found."
+        return f"Working directory set successfully to: {_working_dir}\nAvailable data files in directory: {files_str}"
+    except Exception as e:
+        return f"Working directory set to: {_working_dir}, but failed to list files: {str(e)}"
+
+@tool
+def get_working_directory() -> str:
+    """
+    Returns the current working directory path and lists the available CSV/TSV data files in it.
+    """
+    global _working_dir
+    if _working_dir is None:
+        return "No working directory is currently set. Use set_working_directory to specify one."
+    try:
+        files = os.listdir(_working_dir)
+        csv_tsv_files = [f for f in files if f.endswith(('.csv', '.tsv', '.txt'))]
+        files_str = ", ".join(csv_tsv_files) if csv_tsv_files else "No CSV/TSV/TXT files found."
+        return f"Current working directory: {_working_dir}\nAvailable files: {files_str}"
+    except Exception as e:
+        return f"Current working directory: {_working_dir}, but failed to list files: {str(e)}"
+
+@tool
+def load_expression_dataset(counts_filename: str, design_filename: str) -> str:
+    """
+    Loads a raw expression counts file and a design grouping file from the current working directory.
+    Parameters:
+    - counts_filename: filename of the counts matrix (CSV/TSV).
+    - design_filename: filename of the design metadata (CSV/TSV).
+    """
+    global _working_dir
+    if _working_dir is None:
+        return "Error: Working directory is not set. Please set it using set_working_directory first."
+    
+    counts_path = os.path.join(_working_dir, counts_filename)
+    design_path = os.path.join(_working_dir, design_filename)
+    
+    if not os.path.exists(counts_path):
+        return f"Error: Counts file '{counts_filename}' not found in working directory."
+    if not os.path.exists(design_path):
+        return f"Error: Design file '{design_filename}' not found in working directory."
+        
+    try:
+        # Load counts
+        sep_c = '\t' if counts_filename.endswith(('.tsv', '.txt')) else ','
+        try:
+            uploaded_counts = pd.read_csv(counts_path, sep=sep_c)
+        except UnicodeDecodeError:
+            uploaded_counts = pd.read_csv(counts_path, sep=sep_c, encoding='gbk')
+            
+        first_col = uploaded_counts.columns[0]
+        uploaded_counts = uploaded_counts.set_index(first_col)
+        
+        # Load design
+        sep_d = '\t' if design_filename.endswith(('.tsv', '.txt')) else ','
+        try:
+            uploaded_design = pd.read_csv(design_path, sep=sep_d)
+        except UnicodeDecodeError:
+            uploaded_design = pd.read_csv(design_path, sep=sep_d, encoding='gbk')
+            
+        sample_col = uploaded_design.columns[0]
+        uploaded_design = uploaded_design.set_index(sample_col)
+        
+        # Validate
+        counts_cols = set(uploaded_counts.columns)
+        design_samples = set(uploaded_design.index)
+        common_samples = counts_cols.intersection(design_samples)
+        
+        if not common_samples:
+            return f"Error: No matching samples between counts file columns and design file index."
+            
+        # Sync
+        common_list = sorted(list(common_samples))
+        counts_df = uploaded_counts[common_list].astype(int)
+        design_df = uploaded_design.loc[common_list]
+        
+        # Cache
+        set_cached_data(counts_df, design_df)
+        
+        # Also sync with main.py globals if active
+        import backend.main as main_module
+        main_module.counts_df = counts_df
+        main_module.design_df = design_df
+        main_module.de_results_df = None
+        
+        return (
+            f"Successfully loaded dataset from working directory!\n"
+            f"- Gene Count: {len(counts_df)}\n"
+            f"- Sample Count: {len(counts_df.columns)}\n"
+            f"- Groups: {design_df['Group'].value_counts().to_dict()}"
+        )
+    except Exception as e:
+        return f"Failed to load dataset: {str(e)}"
+
+@tool
+def load_differential_expression_table(filename: str, is_mouse: bool = False, database: str = "KEGG") -> str:
+    """
+    Loads an already analyzed differential expression table (e.g. from DESeq2 or edgeR) from the working directory.
+    Parameters:
+    - filename: name of the DE table file (CSV/TSV).
+    - is_mouse: set to True if it is a mouse dataset (converts pathway genes to title-case).
+    - database: database to use for downstream enrichment (e.g., 'KEGG', 'GO_BP', 'GO_MF', 'GO_CC').
+    """
+    global _working_dir
+    if _working_dir is None:
+        return "Error: Working directory is not set. Please set it using set_working_directory first."
+        
+    file_path = os.path.join(_working_dir, filename)
+    if not os.path.exists(file_path):
+        return f"Error: File '{filename}' not found in working directory."
+        
+    try:
+        sep = '\t' if filename.endswith(('.tsv', '.txt')) else ','
+        try:
+            uploaded_df = pd.read_csv(file_path, sep=sep)
+        except UnicodeDecodeError:
+            uploaded_df = pd.read_csv(file_path, sep=sep, encoding='gbk')
+            
+        # Map the gene names
+        gene_col = None
+        for col in uploaded_df.columns:
+            if col.lower() in ['gene', 'gene_id', 'gene_name', 'symbol', 'id', 'name']:
+                gene_col = col
+                break
+        if gene_col:
+            uploaded_df = uploaded_df.rename(columns={gene_col: 'Gene'})
+        else:
+            first_col = uploaded_df.columns[0]
+            uploaded_df = uploaded_df.rename(columns={first_col: 'Gene'})
+            
+        uploaded_df = uploaded_df.set_index('Gene')
+        
+        # Map logFC
+        fc_col = None
+        for col in uploaded_df.columns:
+            if col.lower() in ['log2foldchange', 'log2fc', 'logfc', 'log2_fold_change', 'log2_fc', 'log_fc']:
+                fc_col = col
+                break
+         
+        # Map PValue
+        p_col = None
+        for col in uploaded_df.columns:
+            if col.lower() in ['pvalue', 'p.value', 'p_value', 'pval', 'p']:
+                p_col = col
+                break
+         
+        # Map PAdj / FDR
+        padj_col = None
+        for col in uploaded_df.columns:
+            if col.lower() in ['padj', 'p.adjust', 'p_adj', 'fdr', 'qvalue', 'q-value', 'adj_p']:
+                padj_col = col
+                break
+                 
+        if not fc_col or not p_col:
+            return (
+                f"Error: Could not identify differential expression columns. "
+                f"Available columns: {list(uploaded_df.columns)}. "
+                f"Need columns similar to 'log2FoldChange' / 'logFC' and 'pvalue' / 'PValue'."
+            )
+            
+        mapped_df = pd.DataFrame(index=uploaded_df.index)
+        mapped_df['Log2FC'] = uploaded_df[fc_col].astype(float)
+        mapped_df['PValue'] = uploaded_df[p_col].astype(float)
+        
+        if padj_col:
+            mapped_df['PAdj'] = uploaded_df[padj_col].astype(float)
+        else:
+            from statsmodels.stats import multitest
+            pvals = mapped_df['PValue'].fillna(1.0).values
+            _, padj, _, _ = multitest.multipletests(pvals, alpha=0.05, method='fdr_bh')
+            mapped_df['PAdj'] = padj
+            
+        mapped_df['Mean_Control'] = 10.0
+        mapped_df['Mean_Treat'] = 10.0 + mapped_df['Log2FC']
+        
+        # Cache de_results
+        _data_cache["de_results"] = mapped_df
+        
+        # Setup dummy counts and design for compatibility
+        counts_df = pd.DataFrame(index=mapped_df.index)
+        counts_df['Control_1'] = 100
+        counts_df['Treat_1'] = 100
+        design_df = pd.DataFrame({'Group': ['Control', 'Treat']}, index=['Control_1', 'Treat_1'])
+        
+        _data_cache["counts"] = counts_df
+        _data_cache["design"] = design_df
+        
+        # Also sync with main.py globals
+        import backend.main as main_module
+        main_module.counts_df = counts_df
+        main_module.design_df = design_df
+        main_module.de_results_df = mapped_df
+        main_module.current_organism = "mouse" if is_mouse else "human"
+        main_module.current_database = database
+        
+        return (
+            f"Successfully imported pre-analyzed differential expression table from working directory!\n"
+            f"- Total genes loaded: {len(mapped_df)}\n"
+            f"- Species: {'mouse (小鼠)' if is_mouse else 'human (人类)'}\n"
+            f"- Database set: {database}\n"
+            f"- Up-regulated genes count (FDR <= 0.05, Log2FC >= 1): {len(mapped_df[(mapped_df['PAdj'] <= 0.05) & (mapped_df['Log2FC'] >= 1)])}\n"
+            f"- Down-regulated genes count (FDR <= 0.05, Log2FC <= -1): {len(mapped_df[(mapped_df['PAdj'] <= 0.05) & (mapped_df['Log2FC'] <= -1)])}"
+        )
+    except Exception as e:
+        return f"Failed to import differential expression table: {str(e)}"
+
 def get_agent_instance(model_name: str = "qwen-plus", api_key: str = None, base_url: str = None):
     """
     Initializes and returns a deepagent instance.
     Uses domestic models (Qwen, DeepSeek, GLM, etc.) by wrapping them in ChatOpenAI.
     """
-    # Environment variable fallbacks
     key = api_key or os.environ.get("COWORKER_API_KEY") or os.environ.get("OPENAI_API_KEY") or "mock-key"
     url = base_url or os.environ.get("COWORKER_API_BASE") or os.environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1"
     
-    # Determine the model. If no api key is real, we can mock responses.
     if key == "mock-key" and not os.environ.get("COWORKER_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
         logger.warning("No real API key found. Agent will operate with fallback mock responses.")
         
-    # Configure the Chat model
-    # We pass it directly to create_deep_agent
     chat_model = ChatOpenAI(
         model=model_name,
         openai_api_key=key,
@@ -175,23 +396,31 @@ def get_agent_instance(model_name: str = "qwen-plus", api_key: str = None, base_
         "You are BioCoworker, an advanced AI agent specializing in Bioinformatics and RNA-seq downstream analysis.\n"
         "You help researchers analyze their RNA-seq datasets (counts matrix and sample metadata groups).\n"
         "Your available tools allow you to:\n"
-        "1. Check the loaded dataset summary.\n"
-        "2. Run differential expression analysis (which computes Log2 Fold Change, P-values, and FDR).\n"
-        "3. Run pathway enrichment analysis (KEGG/GO) to find biological pathways affected by the treatment.\n"
-        "4. Look up functional descriptions of specific genes and relate them to the dataset statistics.\n\n"
-        "Please guide the researcher through the analysis. If they ask about differential expression, explain "
+        "1. set_working_directory: Set the folder path where the user's raw files are stored.\n"
+        "2. get_working_directory: List the files in the current working directory.\n"
+        "3. load_expression_dataset: Load a raw expression counts matrix and design file from the working directory.\n"
+        "4. load_differential_expression_table: Directly load a pre-analyzed differential expression table (DESeq2/edgeR) from the working directory.\n"
+        "5. get_dataset_summary: Check the loaded dataset summary.\n"
+        "6. run_differential_expression_analysis: Run differential expression on loaded counts.\n"
+        "7. run_enrichment_analysis: Run pathway enrichment (KEGG/GO) on loaded/analyzed differential expression results.\n"
+        "8. get_gene_details: Look up functional details of specific genes.\n\n"
+        "Please guide the researcher through the analysis. You can set the working directory, import files, "
+        "and run analysis directly. If they ask about differential expression, explain "
         "what the tools did and identify key genes (like TP53, EGFR, MYC, TNF, etc.) and pathways "
         "(like MAPK, Cell Cycle, Apoptosis) that are affected."
     )
     
-    # Create the agent using deepagents
     agent = create_deep_agent(
         model=chat_model,
         tools=[
             get_dataset_summary,
             run_differential_expression_analysis,
             run_enrichment_analysis,
-            get_gene_details
+            get_gene_details,
+            set_working_directory,
+            get_working_directory,
+            load_expression_dataset,
+            load_differential_expression_table
         ],
         system_prompt=system_prompt
     )
