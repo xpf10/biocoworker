@@ -4,6 +4,10 @@ from scipy import stats
 from sklearn.decomposition import PCA
 import statsmodels.stats.multitest as multi
 import typing
+import subprocess
+import tempfile
+import os
+import shutil
 
 # =====================================================================
 # 1. TRANSCRIPTOMICS (RNA-seq) MODULE
@@ -65,42 +69,87 @@ def generate_mock_rnaseq_data(num_genes: int = 1500) -> typing.Tuple[pd.DataFram
     return counts_df, design_df
 
 def run_differential_expression(counts_df: pd.DataFrame, design_df: pd.DataFrame) -> pd.DataFrame:
+    # Filter low count genes
     counts_df = counts_df[counts_df.sum(axis=1) > 0]
-    ctrl_samples = design_df[design_df['Group'] == 'Control'].index.tolist()
-    treat_samples = design_df[design_df['Group'] == 'Treat'].index.tolist()
     
-    cpm_df = counts_df.div(counts_df.sum(axis=0), axis=1) * 1e6
-    log_cpm = np.log2(cpm_df + 1)
-    
-    ctrl_expr = log_cpm[ctrl_samples]
-    treat_expr = log_cpm[treat_samples]
-    
-    mean_ctrl = ctrl_expr.mean(axis=1)
-    mean_treat = treat_expr.mean(axis=1)
-    log2_fc = mean_treat - mean_ctrl
-    
-    p_values = []
-    for gene in counts_df.index:
-        c_vals = ctrl_expr.loc[gene].values
-        t_vals = treat_expr.loc[gene].values
-        t_stat, p_val = stats.ttest_ind(t_vals, c_vals, equal_var=False)
-        if np.isnan(p_val):
-            p_val = 1.0
-        p_values.append(p_val)
+    # Try running pydeseq2
+    try:
+        from pydeseq2.dds import DeseqDataSet
+        from pydeseq2.ds import DeseqStats
         
-    p_values = np.array(p_values)
-    reject, p_adj, _, _ = multi.multipletests(p_values, alpha=0.05, method='fdr_bh')
-    
-    results_df = pd.DataFrame({
-        'Gene': counts_df.index,
-        'Mean_Control': mean_ctrl.values,
-        'Mean_Treat': mean_treat.values,
-        'Log2FC': log2_fc.values,
-        'PValue': p_values,
-        'PAdj': p_adj
-    }).set_index('Gene')
-    
-    return results_df
+        # DeseqDataSet expects integer counts and samples as rows (T)
+        counts_int = counts_df.round().astype(int)
+        
+        dds = DeseqDataSet(
+            counts=counts_int.T,
+            clinical=design_df,
+            design_factors="Group",
+            quiet=True
+        )
+        dds.deseq2()
+        
+        # Extract statistics for Treat vs Control
+        stat_res = DeseqStats(dds, contrast=["Group", "Treat", "Control"])
+        stat_res.summary()
+        res_df = stat_res.results_df
+        
+        # Calculate raw group means for UI display
+        ctrl_samples = design_df[design_df['Group'] == 'Control'].index.tolist()
+        treat_samples = design_df[design_df['Group'] == 'Treat'].index.tolist()
+        cpm_df = counts_df.div(counts_df.sum(axis=0), axis=1) * 1e6
+        log_cpm = np.log2(cpm_df + 1)
+        mean_ctrl = log_cpm[ctrl_samples].mean(axis=1)
+        mean_treat = log_cpm[treat_samples].mean(axis=1)
+        
+        # DeseqStats results_df has index matching the genes
+        results_df = pd.DataFrame({
+            'Mean_Control': mean_ctrl.loc[counts_df.index].values,
+            'Mean_Treat': mean_treat.loc[counts_df.index].values,
+            'Log2FC': res_df['log2FoldChange'].loc[counts_df.index].values,
+            'PValue': res_df['pvalue'].loc[counts_df.index].values,
+            'PAdj': res_df['padj'].loc[counts_df.index].fillna(1.0).values
+        }, index=counts_df.index)
+        
+        print("INFO: Successfully ran differential expression using pydeseq2.")
+        return results_df
+        
+    except Exception as e:
+        print(f"WARNING: pydeseq2 run failed or not installed: {str(e)}. Falling back to standard t-test on log-CPM.")
+        
+        ctrl_samples = design_df[design_df['Group'] == 'Control'].index.tolist()
+        treat_samples = design_df[design_df['Group'] == 'Treat'].index.tolist()
+        
+        cpm_df = counts_df.div(counts_df.sum(axis=0), axis=1) * 1e6
+        log_cpm = np.log2(cpm_df + 1)
+        
+        ctrl_expr = log_cpm[ctrl_samples]
+        treat_expr = log_cpm[treat_samples]
+        
+        mean_ctrl = ctrl_expr.mean(axis=1)
+        mean_treat = treat_expr.mean(axis=1)
+        log2_fc = mean_treat - mean_ctrl
+        
+        p_values = []
+        for gene in counts_df.index:
+            c_vals = ctrl_expr.loc[gene].values
+            t_vals = treat_expr.loc[gene].values
+            t_stat, p_val = stats.ttest_ind(t_vals, c_vals, equal_var=False)
+            if np.isnan(p_val):
+                p_val = 1.0
+            p_values.append(p_val)
+            
+        p_values = np.array(p_values)
+        reject, p_adj, _, _ = multi.multipletests(p_values, alpha=0.05, method='fdr_bh')
+        
+        results_df = pd.DataFrame({
+            'Mean_Control': mean_ctrl.values,
+            'Mean_Treat': mean_treat.values,
+            'Log2FC': log2_fc.values,
+            'PValue': p_values,
+            'PAdj': p_adj
+        }, index=counts_df.index)
+        
+        return results_df
 
 def run_pca_analysis(counts_df: pd.DataFrame, design_df: pd.DataFrame) -> typing.Tuple[pd.DataFrame, list]:
     cpm_df = counts_df.div(counts_df.sum(axis=0), axis=1) * 1e6
@@ -138,39 +187,122 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
         "Ribosome": [f"Gene_{i:04d}" for i in range(200, 240)]
     }
     
-    sig_de = de_results[(de_results['PAdj'] <= p_adj_cutoff) & (de_results['Log2FC'].abs() >= log2fc_cutoff)]
-    sig_genes = set(sig_de.index.tolist())
-    all_genes_count = len(de_results)
-    sig_count = len(sig_genes)
-    
-    enrichment_results = []
-    if sig_count == 0:
-        return []
-        
-    for pathway_name, path_genes in pathways.items():
-        path_genes_in_data = [g for g in path_genes if g in de_results.index]
-        M = all_genes_count
-        n = sig_count
-        N = len(path_genes_in_data)
-        overlap_genes = sig_genes.intersection(path_genes_in_data)
-        k = len(overlap_genes)
-        
-        if k > 0:
-            p_val = stats.hypergeom.sf(k - 1, M, n, N)
-            if np.isnan(p_val):
-                p_val = 1.0
+    # Try running clusterProfiler via Rscript
+    try:
+        sig_de = de_results[(de_results['PAdj'] <= p_adj_cutoff) & (de_results['Log2FC'].abs() >= log2fc_cutoff)]
+        sig_genes = sig_de.index.tolist()
+        if not sig_genes:
+            return []
             
-            enrichment_results.append({
-                "Pathway": pathway_name,
-                "Overlap": k,
-                "Pathway_Size": N,
-                "Genes": list(overlap_genes),
-                "PValue": float(p_val),
-                "Log10PValue": -np.log10(p_val + 1e-30)
-            })
+        rscript_path = shutil.which('Rscript')
+        if not rscript_path:
+            raise FileNotFoundError("Rscript executable not found in system PATH.")
             
-    enrichment_results.sort(key=lambda x: x["PValue"])
-    return enrichment_results
+        with tempfile.TemporaryDirectory() as tmpdir:
+            genes_file = os.path.join(tmpdir, "genes.csv")
+            term2gene_file = os.path.join(tmpdir, "term2gene.csv")
+            output_file = os.path.join(tmpdir, "output.csv")
+            
+            # Write files
+            pd.Series(sig_genes).to_csv(genes_file, index=False, header=False)
+            t2g_list = []
+            for term, g_list in pathways.items():
+                for g in g_list:
+                    t2g_list.append({"Pathway": term, "Gene": g})
+            pd.DataFrame(t2g_list).to_csv(term2gene_file, index=False)
+            
+            # Write R script using clusterProfiler::enricher
+            r_script_content = f"""
+            suppressPackageStartupMessages(library(clusterProfiler))
+            genes <- read.csv("{genes_file.replace('\\', '/')}", header=FALSE)[,1]
+            term2gene <- read.csv("{term2gene_file.replace('\\', '/')}")
+            
+            res <- enricher(
+                gene = as.character(genes),
+                pvalueCutoff = 1.0,
+                pAdjustMethod = "BH",
+                minGSSize = 1,
+                TERM2GENE = term2gene
+            )
+            
+            if (!is.null(res) && nrow(res@result) > 0) {{
+                write.csv(res@result, "{output_file.replace('\\', '/')}", row.names=FALSE)
+            }} else {{
+                write.csv(data.frame(), "{output_file.replace('\\', '/')}", row.names=FALSE)
+            }}
+            """
+            
+            r_script_file = os.path.join(tmpdir, "run_enricher.R")
+            with open(r_script_file, "w", encoding="utf-8") as f:
+                f.write(r_script_content)
+                
+            # Execute
+            subprocess.run(
+                [rscript_path, r_script_file],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True
+            )
+            
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 4:
+                res_df = pd.read_csv(output_file)
+                if not res_df.empty and 'ID' in res_df.columns:
+                    enrichment_results = []
+                    for _, row in res_df.iterrows():
+                        # check if count > 0
+                        if int(row['Count']) > 0:
+                            gene_ids = str(row['geneID']).split('/') if not pd.isna(row['geneID']) else []
+                            enrichment_results.append({
+                                "Pathway": row['ID'],
+                                "Overlap": int(row['Count']),
+                                "Pathway_Size": len(pathways.get(row['ID'], [])),
+                                "Genes": gene_ids,
+                                "PValue": float(row['pvalue']),
+                                "Log10PValue": -np.log10(float(row['pvalue']) + 1e-30)
+                            })
+                    print("INFO: Successfully ran enrichment analysis using R clusterProfiler.")
+                    return enrichment_results
+                    
+        raise RuntimeError("clusterProfiler returned no data or R execution failed.")
+        
+    except Exception as e:
+        print(f"WARNING: clusterProfiler run failed: {str(e)}. Falling back to Python hypergeometric GSEA.")
+        
+        # Hypergeometric fallback (equivalent ORA)
+        sig_de = de_results[(de_results['PAdj'] <= p_adj_cutoff) & (de_results['Log2FC'].abs() >= log2fc_cutoff)]
+        sig_genes = set(sig_de.index.tolist())
+        all_genes_count = len(de_results)
+        sig_count = len(sig_genes)
+        
+        enrichment_results = []
+        if sig_count == 0:
+            return []
+            
+        for pathway_name, path_genes in pathways.items():
+            path_genes_in_data = [g for g in path_genes if g in de_results.index]
+            M = all_genes_count
+            n = sig_count
+            N = len(path_genes_in_data)
+            overlap_genes = sig_genes.intersection(path_genes_in_data)
+            k = len(overlap_genes)
+            
+            if k > 0:
+                p_val = stats.hypergeom.sf(k - 1, M, n, N)
+                if np.isnan(p_val):
+                    p_val = 1.0
+                
+                enrichment_results.append({
+                    "Pathway": pathway_name,
+                    "Overlap": k,
+                    "Pathway_Size": N,
+                    "Genes": list(overlap_genes),
+                    "PValue": float(p_val),
+                    "Log10PValue": -np.log10(p_val + 1e-30)
+                })
+                
+        enrichment_results.sort(key=lambda x: x["PValue"])
+        return enrichment_results
 
 def get_heatmap_data(counts_df: pd.DataFrame, de_results: pd.DataFrame, top_n: int = 50) -> dict:
     top_genes = de_results.sort_values('PAdj').head(top_n).index.tolist()
