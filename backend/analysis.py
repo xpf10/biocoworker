@@ -289,7 +289,7 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
             )
             
             enrichment_results = []
-            if not enr.results.empty:
+            if hasattr(enr, 'results') and isinstance(enr.results, pd.DataFrame) and not enr.results.empty:
                 res_df = enr.results
                 for _, row in res_df.iterrows():
                     p_val = float(row.get('P-value', 1.0))
@@ -314,6 +314,9 @@ def run_pathway_enrichment(de_results: pd.DataFrame, p_adj_cutoff: float = 0.05,
                 enrichment_results.sort(key=lambda x: x["PValue"])
                 print("INFO: Successfully ran enrichment analysis using GSEApy ORA.")
                 return enrichment_results
+            else:
+                print("INFO: GSEApy ORA returned no enriched pathways (empty results).")
+                return []
         except Exception as gse_err:
             print(f"WARNING: GSEApy ORA failed: {str(gse_err)}. Falling back to scipy hypergeometric calculation.")
             
