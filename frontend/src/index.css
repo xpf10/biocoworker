@@ -1,6 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  --font-sans: 'Fira Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
+  font-display: swap;
 
   /* Signature QwenPaw Orange Brand Theme - Light Mode */
   --bg-primary: #f5f5f7;
@@ -32,6 +35,14 @@
   --sidebar-width: 260px;
   --transition-fast: 0.12s cubic-bezier(0.4, 0, 0.2, 1);
   --transition-normal: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Biomimetic & Organic Biotech variables */
+  --cellular-pink: #FF9999;
+  --chlorophyll: #059669;
+  --bioluminescent: #0EA5E9;
+  --breathing-duration: 4s;
+  --morph-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --organic-blur: 20px;
 }
 
 /* QwenPaw Dark Mode Default */
@@ -113,4 +124,19 @@ body {
 
 .animate-pulse-orange {
   animation: pulse-orange 2.5s infinite ease-in-out;
+}
+
+@keyframes breathing-biotech {
+  0%, 100% {
+    box-shadow: 0 0 10px rgba(14, 165, 233, 0.08), 0 0 4px rgba(5, 150, 105, 0.04);
+    border-color: var(--border-color);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(14, 165, 233, 0.22), 0 0 8px rgba(5, 150, 105, 0.12);
+    border-color: var(--bioluminescent);
+  }
+}
+
+.animate-breathing-biotech {
+  animation: breathing-biotech var(--breathing-duration) infinite var(--morph-ease);
 }

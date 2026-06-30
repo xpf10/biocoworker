@@ -144,8 +144,8 @@
 }
 
 .file-card.active {
-  border-color: var(--color-primary);
   background-color: var(--bg-accent);
+  animation: breathing-biotech var(--breathing-duration) infinite var(--morph-ease);
 }
 
 .file-card .icon-left {
