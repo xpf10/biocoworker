@@ -374,7 +374,7 @@ def load_differential_expression_table(filename: str, is_mouse: bool = False, da
     except Exception as e:
         return f"Failed to import differential expression table: {str(e)}"
 
-def get_agent_instance(model_name: str = "qwen-plus", api_key: str = None, base_url: str = None):
+def get_agent_instance(model_name: str = "qwen-plus", api_key: str = None, base_url: str = None, memories: list = None, skills: list = None):
     """
     Initializes and returns a deepagent instance.
     Uses domestic models (Qwen, DeepSeek, GLM, etc.) by wrapping them in ChatOpenAI.
@@ -409,6 +409,19 @@ def get_agent_instance(model_name: str = "qwen-plus", api_key: str = None, base_
         "what the tools did and identify key genes (like TP53, EGFR, MYC, TNF, etc.) and pathways "
         "(like MAPK, Cell Cycle, Apoptosis) that are affected."
     )
+    
+    # Inject memories if present
+    if memories:
+        system_prompt += "\n\n=== LONG-TERM MEMORY (User preferences & facts you must remember) ===\n"
+        for m in memories:
+            system_prompt += f"- {m}\n"
+            
+    # Inject enabled skills if present
+    if skills:
+        system_prompt += "\n\n=== ACTIVATED BIOLOGICAL SKILLS & INSTRUCTIONS ===\n"
+        for s in skills:
+            if s.get("enabled", False):
+                system_prompt += f"Skill [{s['name']}]: {s['instructions']}\n"
     
     agent = create_deep_agent(
         model=chat_model,

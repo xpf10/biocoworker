@@ -85,6 +85,107 @@ DEFAULT_PRESETS = [
     }
 ]
 
+SKILLS_PATH = os.path.join(os.path.dirname(__file__), "config", "skills.json")
+MEMORY_PATH = os.path.join(os.path.dirname(__file__), "config", "memories.json")
+
+DEFAULT_SKILLS = [
+    {
+        "id": "biostatistics_helper",
+        "name": "生物统计原理解析 (Biostatistics)",
+        "description": "深入浅出地向用户解释超几何检验、p值校正（FDR）等统计学名词的生物学意义。",
+        "instructions": "When explaining results, always provide deep, intuitive explanations of biostatistical concepts (like why FDR correction is needed for multiple testing, or the meaning of hypergeometric p-value) if the user asks or seems confused.",
+        "enabled": True
+    },
+    {
+        "id": "pathway_enrichment_expert",
+        "name": "通路功能富集解读 (Enrichment)",
+        "description": "结合 KEGG 和 GO 背景，向用户详述富集得到的关键通路在心脏、免疫或肿瘤等生理过程中的作用。",
+        "instructions": "You possess deep knowledge of KEGG and GO pathways. When discussing enrichment, relate the enriched pathways to the physiological context (e.g., cell cycle progression, MAPK signaling cascade, heart development, hypoxia) to provide a rich biological story.",
+        "enabled": True
+    },
+    {
+        "id": "gene_interaction_analyst",
+        "name": "基因互作网络分析 (Network Analyst)",
+        "description": "分析核心基因在蛋白质互作网络（PPI）中的 Hub 节点地位，指导用户寻找药物靶点。",
+        "instructions": "You specialize in protein-protein interaction (PPI) network analysis. Highlight network topology, hubs, bottleneck genes, and how they relate to drug targets or biological pathways.",
+        "enabled": False
+    }
+]
+
+def load_skills() -> list:
+    os.makedirs(os.path.dirname(SKILLS_PATH), exist_ok=True)
+    if not os.path.exists(SKILLS_PATH):
+        initial = {"skills": DEFAULT_SKILLS}
+        try:
+            with open(SKILLS_PATH, "w", encoding="utf-8") as f:
+                json.dump(initial, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Failed to initialize skills: {e}")
+        return DEFAULT_SKILLS
+    try:
+        with open(SKILLS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("skills", DEFAULT_SKILLS)
+    except Exception as e:
+        logger.error(f"Failed to load skills: {e}")
+        return DEFAULT_SKILLS
+
+def save_skills(skills: list):
+    try:
+        with open(SKILLS_PATH, "w", encoding="utf-8") as f:
+            json.dump({"skills": skills}, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save skills: {e}")
+
+def load_memories() -> list:
+    os.makedirs(os.path.dirname(MEMORY_PATH), exist_ok=True)
+    if not os.path.exists(MEMORY_PATH):
+        try:
+            with open(MEMORY_PATH, "w", encoding="utf-8") as f:
+                json.dump([], f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Failed to initialize memories: {e}")
+        return []
+    try:
+        with open(MEMORY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load memories: {e}")
+        return []
+
+def save_memories(memories: list):
+    try:
+        with open(MEMORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(memories, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save memories: {e}")
+
+def check_biosecurity_safety(prompt: str) -> tuple[bool, str]:
+    prompt_lower = prompt.lower()
+    sensitive_keywords = [
+        "ricin", "蓖麻毒素", "蓖麻毒", "botulinum", "肉毒毒素", "肉毒碱", "abrin", "相思子毒素",
+        "sarin", "沙林", "soman", "梭曼", "tabun", "塔崩", "vx nerve", "vx毒剂", "t-2 toxin", "t-2毒素",
+        "anthrax", "炭疽", "炭疽杆菌", "smallpox", "天花", "天花病毒", "ebola", "埃博拉",
+        "marburg", "马尔堡病毒", "lassa", "拉沙热", "plague", "鼠疫", "鼠疫杆菌", "yersinia pestis",
+        "biological weapon", "bioweapon", "生物武器", "细菌武器", "毒素武器", "pathogen engineering",
+        "weaponization", "武器化", "pathogen modification", "病原体改造", "make virus lethal", "增加病毒毒力"
+    ]
+    action_keywords = [
+        "synthesis", "synthesize", "合成", "制作", "提取", "extract", "cultivate", "培养", "modify", "改造",
+        "create", "制造", "weaponize", "武器化", "deploy", "释放", "propagate", "传播", "recipe", "配方", "instruction", "步骤"
+    ]
+    hit_sensitive = [k for k in sensitive_keywords if k in prompt_lower]
+    if hit_sensitive:
+        hit_action = [a for a in action_keywords if a in prompt_lower]
+        if hit_action or any(word in prompt_lower for word in ["怎么", "如何", "如何制作", "如何合成", "怎样提取", "how to"]):
+            warning_text = (
+                "⚠️ **[安全护栏拦截 / Biosecurity Guardrail Triggered]**\n\n"
+                "检测到涉及敏感生物安全、受控毒素或病原体合成/改造的请求。系统已拦截该对话。\n\n"
+                "**说明**: BioCoworker 实力践行国际生物安全防范，拒绝提供任何生物武器、受控毒素、高致病性病原体的获取、合成、提取或人工改造的指导与指南。"
+            )
+            return False, warning_text
+    return True, ""
+
 def load_models_config():
     if not os.path.exists(CONFIG_PATH):
         initial_config = {
@@ -265,6 +366,93 @@ def test_model_connection(request: SelectionRequest):
             "status": "error", 
             "message": f"Connection failed: {str(e)}. Please check your API key, Base URL, or network access."
         }
+
+
+# Skills APIs
+class ToggleSkillRequest(BaseModel):
+    id: str
+
+class AddSkillRequest(BaseModel):
+    id: str
+    name: str
+    description: str
+    instructions: str
+
+@app.get("/api/skills")
+def get_skills_endpoint():
+    return {"skills": load_skills()}
+
+@app.post("/api/skills/toggle")
+def toggle_skill_endpoint(req: ToggleSkillRequest):
+    skills = load_skills()
+    found = False
+    for s in skills:
+        if s["id"] == req.id:
+            s["enabled"] = not s.get("enabled", False)
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=400, detail=f"Skill '{req.id}' not found.")
+    save_skills(skills)
+    return {"status": "success", "skills": skills}
+
+@app.post("/api/skills/add")
+def add_skill_endpoint(req: AddSkillRequest):
+    skills = load_skills()
+    if any(s["id"] == req.id for s in skills):
+        raise HTTPException(status_code=400, detail=f"Skill with ID '{req.id}' already exists.")
+    
+    new_skill = {
+        "id": req.id,
+        "name": req.name,
+        "description": req.description,
+        "instructions": req.instructions,
+        "enabled": True
+    }
+    skills.append(new_skill)
+    save_skills(skills)
+    return {"status": "success", "skills": skills}
+
+@app.post("/api/skills/delete")
+def delete_skill_endpoint(req: ToggleSkillRequest):
+    skills = load_skills()
+    new_skills = [s for s in skills if s["id"] != req.id]
+    if len(new_skills) == len(skills):
+        raise HTTPException(status_code=400, detail=f"Skill with ID '{req.id}' not found.")
+    save_skills(new_skills)
+    return {"status": "success", "skills": new_skills}
+
+
+# Memories APIs
+class AddMemoryRequest(BaseModel):
+    content: str
+
+class DeleteMemoryRequest(BaseModel):
+    index: int
+
+@app.get("/api/memories")
+def get_memories_endpoint():
+    return {"memories": load_memories()}
+
+@app.post("/api/memories/add")
+def add_memory_endpoint(req: AddMemoryRequest):
+    memories = load_memories()
+    val = req.content.strip()
+    if not val:
+        raise HTTPException(status_code=400, detail="Memory content cannot be empty.")
+    if val not in memories:
+        memories.append(val)
+        save_memories(memories)
+    return {"status": "success", "memories": memories}
+
+@app.post("/api/memories/delete")
+def delete_memory_endpoint(req: DeleteMemoryRequest):
+    memories = load_memories()
+    if req.index < 0 or req.index >= len(memories):
+        raise HTTPException(status_code=400, detail="Invalid memory index.")
+    memories.pop(req.index)
+    save_memories(memories)
+    return {"status": "success", "memories": memories}
 
 # =====================================================================
 # DATA IMPORTER & MULTI-OMICS PIPELINES
@@ -579,6 +767,17 @@ def run_analysis(
 @app.post("/api/chat")
 def chat_with_agent(chat_input: ChatMessage):
     global counts_df, design_df, current_omics, model_config
+    
+    # 1. Biosecurity safety guardrail check
+    is_safe, warning_reply = check_biosecurity_safety(chat_input.message)
+    if not is_safe:
+        logger.warning("Biosecurity guardrail triggered!")
+        return {
+            "status": "success",
+            "reply": warning_reply,
+            "steps": []
+        }
+        
     if current_omics != "genomics" and (counts_df is None or design_df is None):
         logger.info("Auto-loading mock data for chat session initialization.")
         counts_df, design_df = generate_mock_rnaseq_data()
@@ -593,12 +792,39 @@ def chat_with_agent(chat_input: ChatMessage):
         base_url = active_model["base_url"] if active_model else "https://dashscope.aliyuncs.com/compatible-mode/v1"
         api_key = active_model["api_key"] if active_model else ""
         
+        # Load memories and skills
+        mems = load_memories()
+        skills = load_skills()
+        
+        # Initialize agent with memories and skills
         agent = get_agent_instance(
             model_name=m_name,
             api_key=api_key,
-            base_url=base_url
+            base_url=base_url,
+            memories=mems,
+            skills=skills
         )
         
+        # Auto-extract new memories from current message
+        msg_lower = chat_input.message.lower()
+        extracted_mems = []
+        if "小鼠" in msg_lower or "mouse" in msg_lower:
+            extracted_mems.append("用户正在进行小鼠（mouse）多组学分析。")
+        if "人类" in msg_lower or "human" in msg_lower:
+            extracted_mems.append("用户正在进行人类（human）多组学分析。")
+        if "转录组" in msg_lower or "transcriptomics" in msg_lower:
+            extracted_mems.append("用户关注的分析领域为转录组学（Transcriptomics）。")
+        if "蛋白质组" in msg_lower or "proteomics" in msg_lower:
+            extracted_mems.append("用户关注的分析领域为蛋白质组学（Proteomics）。")
+        if "代谢组" in msg_lower or "metabolomics" in msg_lower:
+            extracted_mems.append("用户关注的分析领域为代谢组学（Metabolomics）。")
+            
+        if extracted_mems:
+            for em in extracted_mems:
+                if em not in mems:
+                    mems.append(em)
+            save_memories(mems)
+            
         input_data = {"messages": [("user", chat_input.message)]}
         response = agent.invoke(input_data)
         
